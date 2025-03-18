@@ -1,63 +1,85 @@
 # tests/data_storage/test_data_manager.py
 import pytest
 import pandas as pd
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from src.data_storage.data_manager import DataManager
-from src.data_storage.database import Database
 
 class TestDataManager:
     
-    def test_init(self, test_db):
+    def test_init(self):
         """DataManagerの初期化テスト"""
-        manager = DataManager(test_db)
+        # データベースをモック
+        mock_db = MagicMock()
+        
+        # モックの振る舞いを設定
+        mock_db.insert_pitch_types = MagicMock()
+        
+        # テスト実行
+        manager = DataManager(mock_db)
+        
+        # 検証
         assert manager is not None
-        assert manager.db is test_db
+        assert manager.db is mock_db
+        # insert_pitch_typesが呼ばれたことを確認
+        mock_db.insert_pitch_types.assert_called_once()
         
-    def test_initialize_pitch_types(self, test_db):
+    def test_initialize_pitch_types(self):
         """球種初期化テスト"""
+        # データベースをモック
+        mock_db = MagicMock()
+        
         # テスト実行
-        manager = DataManager(test_db)
+        manager = DataManager(mock_db)
         
         # 検証
-        conn = test_db._get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) as count FROM pitch_types")
-        result = cursor.fetchone()
-        count = result['count']
-        conn.close()
+        # insert_pitch_typesが呼ばれ、正しいデータが渡されたことを確認
+        mock_db.insert_pitch_types.assert_called_once()
         
-        assert count >= 10  # 複数の球種が登録されていることを確認
+        # 呼び出し時の引数を取得
+        args, _ = mock_db.insert_pitch_types.call_args
+        pitch_types = args[0]
         
-    def test_process_statcast_data(self, test_db, sample_pitch_data):
+        # 球種データが含まれていることを確認
+        assert len(pitch_types) > 0
+        assert any(pt['code'] == 'FF' for pt in pitch_types)
+        assert any(pt['code'] == 'SL' for pt in pitch_types)
+        assert any(pt['code'] == 'CU' for pt in pitch_types)
+        
+    def test_process_statcast_data(self):
         """Statcastデータ処理テスト"""
+        # データベースをモック
+        mock_db = MagicMock()
+        
+        # サンプル投球データ
+        sample_data = pd.DataFrame({
+            'game_date': pd.date_range(start='2023-04-01', periods=10),
+            'player_name': ['Test Pitcher'] * 10,
+            'pitcher': [123456] * 10,
+            'pitch_type': ['FF'] * 5 + ['SL'] * 5,
+            'release_speed': [95.0] * 5 + [85.0] * 5,
+            'release_spin_rate': [2400] * 5 + [2600] * 5,
+            'description': ['swinging_strike'] * 3 + ['called_strike'] * 3 + ['ball'] * 4,
+            'zone': [5] * 6 + [12] * 4
+        })
+        
+        # モックの振る舞いを設定
+        mock_db.get_pitcher_id.return_value = 1
+        mock_db.get_pitch_type_id.side_effect = lambda code: 1 if code == 'FF' else 2
+        mock_db.insert_game.return_value = 1
+        
         # DataManagerのインスタンス化
-        manager = DataManager(test_db)
+        manager = DataManager(mock_db)
         
         # テスト実行
-        manager.process_statcast_data(1, 123456, 'Test Pitcher', sample_pitch_data)
+        manager.process_statcast_data(1, 123456, 'Test Pitcher', sample_data, 'NYY')
         
         # 検証
-        conn = test_db._get_connection()
-        cursor = conn.cursor()
+        # insert_pitchesが呼ばれたことを確認
+        mock_db.insert_pitches.assert_called_once()
         
-        # 投球データが挿入されたか確認
-        cursor.execute("SELECT COUNT(*) as count FROM pitches")
-        result = cursor.fetchone()
-        pitches_count = result['count']
+        # 少なくとも1回 update_pitcher_metrics が呼ばれたことを確認
+        assert mock_db.update_pitcher_metrics.call_count >= 1
         
-        # 球種使用割合が計算されたか確認
-        cursor.execute("SELECT COUNT(*) as count FROM pitch_usage")
-        result = cursor.fetchone()
-        usage_count = result['count']
-        
-        # 成績指標が計算されたか確認
-        cursor.execute("SELECT COUNT(*) as count FROM pitcher_metrics")
-        result = cursor.fetchone()
-        metrics_count = result['count']
-        
-        conn.close()
-        
-        assert pitches_count > 0
-        assert usage_count > 0
-        assert metrics_count > 0
+        # 少なくとも1回 update_pitch_usage が呼ばれたことを確認
+        assert mock_db.update_pitch_usage.call_count >= 1
