@@ -1,0 +1,6 @@
+# requirements-test.txt
+pytest==7.4.0
+pytest-cov==4.1.0
+pytest-mock==3.11.1
+pytest-env==0.8.2
+coverage==7.3.0

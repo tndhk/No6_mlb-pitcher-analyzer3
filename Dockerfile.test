@@ -1,0 +1,32 @@
+# Dockerfile.test
+FROM python:3.9-slim
+
+WORKDIR /app
+
+# タイムゾーンを設定
+ENV TZ=Asia/Tokyo
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# 必要なパッケージをインストール
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    git \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# テスト用の依存パッケージをインストール
+COPY requirements.txt requirements-test.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-test.txt
+
+# アプリケーションコードとテストコードをコピー
+COPY . .
+
+# プロジェクトをインストール可能なパッケージとして設定
+RUN pip install -e .
+
+# テスト実行スクリプトに実行権限を付与
+RUN chmod +x run_tests.sh
+
+# デフォルトのコマンド：全テストを実行
+CMD ["./run_tests.sh", "--all"]

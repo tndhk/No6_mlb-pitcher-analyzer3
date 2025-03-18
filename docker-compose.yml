@@ -15,12 +15,47 @@ services:
       - PYTHONPATH=/app
     command: streamlit run src/app.py
 
-  pytest:
-    build: .
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
     container_name: mlb-pitcher-tests
     volumes:
       - .:/app
       - ./data:/app/data
+      - ./test-results:/app/test-results
     environment:
-      - DB_PATH=/app/data/mlb_pitchers.db
+      - DB_PATH=/app/data/test_mlb_pitchers.db
       - PYTHONPATH=/app
+      - TEST_DB_PATH=/app/data/test.db
+    command: ./run_tests.sh --all --coverage
+
+  unit-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: mlb-pitcher-unit-tests
+    volumes:
+      - .:/app
+      - ./data:/app/data
+      - ./test-results:/app/test-results
+    environment:
+      - DB_PATH=/app/data/test_mlb_pitchers.db
+      - PYTHONPATH=/app
+      - TEST_DB_PATH=/app/data/test.db
+    command: ./run_tests.sh --unit
+
+  integration-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: mlb-pitcher-integration-tests
+    volumes:
+      - .:/app
+      - ./data:/app/data
+      - ./test-results:/app/test-results
+    environment:
+      - DB_PATH=/app/data/test_mlb_pitchers.db
+      - PYTHONPATH=/app
+      - TEST_DB_PATH=/app/data/test.db
+    command: ./run_tests.sh --integration
