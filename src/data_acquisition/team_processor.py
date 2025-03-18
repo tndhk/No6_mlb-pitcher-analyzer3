@@ -3,7 +3,7 @@ import logging
 from typing import List, Dict, Optional
 
 import pandas as pd
-from pybaseball import team_pitching, team_roster
+from pybaseball import team_pitching, playerid_lookup, pitching_stats
 
 class TeamProcessor:
     """
@@ -32,18 +32,36 @@ class TeamProcessor:
             List[Dict]: ピッチャー情報のリスト
         """
         try:
-            self.logger.info(f"Fetching roster for {team} in {season}")
-            roster = team_roster(team, season)
+            self.logger.info(f"Fetching pitchers for {team} in {season}")
+            # 以前のteam_roster関数の代わりに、pitching_statsを使用してチームの投手を取得
+            stats = pitching_stats(season, team=team)
             
-            # ピッチャーのみをフィルタリング
-            pitchers = roster[roster['Position'].str.contains('P')]
+            # 結果が空でないか確認
+            if stats.empty:
+                self.logger.warning(f"No pitchers found for {team} in {season}")
+                return []
             
             result = []
-            for _, row in pitchers.iterrows():
+            for _, row in stats.iterrows():
+                # IDの取得
+                mlbam_id = None
+                name = row.get('Name', '')
+                if name:
+                    # 名前をファーストネームとラストネームに分割
+                    name_parts = name.split(' ', 1)
+                    if len(name_parts) == 2:
+                        first_name, last_name = name_parts
+                        try:
+                            player_info = playerid_lookup(last_name, first_name)
+                            if not player_info.empty:
+                                mlbam_id = player_info.iloc[0].get('key_mlbam')
+                        except Exception as e:
+                            self.logger.error(f"Error looking up ID for {name}: {str(e)}")
+                
                 pitcher_info = {
-                    'mlbam_id': row.get('MLB_ID', None),
-                    'name': f"{row.get('Name', '')}",
-                    'position': row.get('Position', ''),
+                    'mlbam_id': mlbam_id,
+                    'name': name,
+                    'position': 'P',  # ピッチング統計なので全て投手
                     'team': team
                 }
                 result.append(pitcher_info)
