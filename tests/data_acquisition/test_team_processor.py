@@ -12,23 +12,33 @@ class TestTeamProcessor:
         processor = TeamProcessor()
         assert processor is not None
         
-    @patch('src.data_acquisition.team_processor.team_roster')
-    def test_get_team_pitchers(self, mock_team_roster):
+    @patch('src.data_acquisition.team_processor.pitching_stats')
+    @patch('src.data_acquisition.team_processor.playerid_lookup')
+    def test_get_team_pitchers(self, mock_playerid_lookup, mock_pitching_stats):
         """get_team_pitchersメソッドのテスト"""
         # モック設定
-        mock_data = pd.DataFrame({
+        mock_stats = pd.DataFrame({
             'Name': ['Test Pitcher', 'Another Pitcher'],
-            'Position': ['P', 'P'],
-            'MLB_ID': [123456, 234567]
+            'Team': ['NYY', 'NYY'],
+            'W': [10, 8],
+            'ERA': [3.45, 3.78]
         })
-        mock_team_roster.return_value = mock_data
+        mock_pitching_stats.return_value = mock_stats
+        
+        # playerid_lookupのモック設定
+        mock_player_info = pd.DataFrame({
+            'key_mlbam': [123456, 234567],
+            'name_first': ['Test', 'Another'],
+            'name_last': ['Pitcher', 'Pitcher']
+        })
+        mock_playerid_lookup.return_value = mock_player_info
         
         # テスト
         processor = TeamProcessor()
         result = processor.get_team_pitchers('NYY', 2023)
         
         # 検証
-        mock_team_roster.assert_called_once_with('NYY', 2023)
+        mock_pitching_stats.assert_called_once_with(2023, team='NYY')
         assert len(result) == 2
         assert result[0]['name'] == 'Test Pitcher'
         assert result[0]['mlbam_id'] == 123456
