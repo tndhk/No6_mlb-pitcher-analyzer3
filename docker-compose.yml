@@ -13,7 +13,7 @@ services:
     environment:
       - DB_PATH=/app/data/mlb_pitchers.db
       - PYTHONPATH=/app
-    command: streamlit run src/app.py
+    command: streamlit run src/app.py --server.address=0.0.0.0
 
   test:
     build:
