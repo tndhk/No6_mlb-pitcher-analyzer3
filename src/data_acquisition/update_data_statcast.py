@@ -1,4 +1,4 @@
-# src/data_acquisition/update_data.py
+# src/data_acquisition/update_data_statcast.py
 import os
 import sys
 import argparse
@@ -6,16 +6,15 @@ import logging
 import time
 from datetime import datetime
 from typing import List, Optional
+from tqdm import tqdm
 
 import pandas as pd
-from tqdm import tqdm
 
 # プロジェクトのルートディレクトリをPYTHONPATHに追加
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 from src.data_acquisition.statcast_client import StatcastClient
-from src.data_acquisition.batch_processor import BatchProcessor
-from src.data_acquisition.team_processor import TeamProcessor
+from src.data_acquisition.statcast_team_processor import StatcastTeamProcessor
 from src.data_storage.database import Database
 from src.data_storage.data_manager import DataManager
 
@@ -32,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 def setup_argparse() -> argparse.Namespace:
     """コマンドライン引数の設定"""
-    parser = argparse.ArgumentParser(description='MLB投手データの更新スクリプト')
+    parser = argparse.ArgumentParser(description='MLB投手データの更新スクリプト（Statcastベース）')
     
     parser.add_argument(
         '--db-path', 
@@ -56,6 +55,13 @@ def setup_argparse() -> argparse.Namespace:
     )
     
     parser.add_argument(
+        '--start-year', 
+        type=int,
+        default=2022,
+        help='取得開始年（デフォルト: 2020）'
+    )
+    
+    parser.add_argument(
         '--max-workers', 
         type=int,
         default=5,
@@ -75,72 +81,58 @@ def setup_argparse() -> argparse.Namespace:
         help='既存のデータがあっても強制的に更新する'
     )
     
-    parser.add_argument(
-        '--start-year', 
-        type=int,
-        default=2020,
-        help='取得開始年（デフォルト: 2020）- pybaseballのデータ安定性を考慮'
-    )
-    
     return parser.parse_args()
 
 def update_team_data(
     team: str, 
-    team_processor: TeamProcessor,
+    team_processor: StatcastTeamProcessor,
     statcast_client: StatcastClient,
-    batch_processor: BatchProcessor,
     data_manager: DataManager,
     years: int = 3,
     force_update: bool = False,
-    start_year: int = 2020
+    start_year: int = 2020,
+    rate_limit: float = 2.0
 ) -> int:
     """
     特定チームの投手データを更新する
     
     Args:
         team: チーム略称
-        team_processor: TeamProcessorインスタンス
+        team_processor: StatcastTeamProcessorインスタンス
         statcast_client: StatcastClientインスタンス
-        batch_processor: BatchProcessorインスタンス
         data_manager: DataManagerインスタンス
         years: 取得する年数
         force_update: 強制更新フラグ
-        start_year: 開始年（最新データが不安定な場合に備えて過去データから取得）
+        start_year: 開始年
+        rate_limit: API呼び出し間の待機時間（秒）
         
     Returns:
         int: 更新された投手の数
     """
     logger.info(f"Updating data for team: {team}")
     
-    # デバッグ: 直接APIを呼び出して結果を確認
-    logger.info(f"DEBUG: Testing direct API call with pitching_stats(2022, qual=0)")
-    try:
-        from pybaseball import pitching_stats
-        test_data = pitching_stats(2022, qual=0)
-        if test_data is not None and not test_data.empty:
-            logger.info(f"Direct API call successful! Got {len(test_data)} records")
-            logger.info(f"Columns: {test_data.columns.tolist()}")
-            # チーム列を特定
-            team_cols = [col for col in test_data.columns if 'team' in col.lower() or col == 'Tm']
-            if team_cols:
-                for team_col in team_cols:
-                    logger.info(f"Team column '{team_col}' values: {test_data[team_col].unique().tolist()}")
-            else:
-                logger.warning("No team column found in the data")
-        else:
-            logger.warning("Direct API call returned empty data")
-    except Exception as e:
-        logger.error(f"Error in direct API call: {str(e)}")
+    # 利用可能なシーズンを取得
+    available_seasons = team_processor.get_available_seasons()
+    if not available_seasons:
+        logger.warning("No available seasons configured")
+        return 0
+        
+    # 有効な開始年と終了年を計算
+    valid_start_year = team_processor.get_valid_season(start_year)
     
-    # 過去の安定したシーズンからデータを取得
-    # 現在のコードでは2022年までのデータが安定している可能性が高い
-    end_year = min(start_year + years - 1, 2022)
+    # 年度の範囲を計算（設定された利用可能シーズン内に制限）
+    target_years = []
+    for year in range(valid_start_year, valid_start_year + years):
+        valid_year = team_processor.get_valid_season(year)
+        if valid_year not in target_years:  # 重複を避ける
+            target_years.append(valid_year)
     
-    # 取得対象年のリスト作成
-    target_years = list(range(start_year, end_year + 1))
-    target_years.reverse()  # 新しい年から順に取得
+    # 新しい年から順に処理
+    target_years.sort(reverse=True)
     
-    # 各シーズンの投手を取得
+    logger.info(f"Target seasons for {team}: {target_years}")
+    
+    # 利用可能な選手リストを取得
     pitchers = []
     for year in target_years:
         try:
@@ -174,29 +166,49 @@ def update_team_data(
                 pitcher_info['name'], 
                 pitcher_info['team']
             )
+        
+        # 各シーズンのデータを取得
+        all_pitcher_data = pd.DataFrame()
+        
+        for year in range(start_year, start_year + years):
+            try:
+                # Statcastから投手データを取得
+                season_data = team_processor.get_pitcher_data(mlb_id, year)
+                
+                if not season_data.empty:
+                    # シーズン情報を追加（あれば）
+                    if 'season' not in season_data.columns:
+                        season_data['season'] = year
+                        
+                    # データを結合
+                    all_pitcher_data = pd.concat([all_pitcher_data, season_data])
+            except Exception as e:
+                logger.error(f"Error fetching data for {pitcher_info['name']} in {year}: {str(e)}")
             
-        # 投手データを取得
-        try:
-            pitcher_data = statcast_client.get_last_n_years_data(mlb_id, years)
+            # APIレート制限のための待機
+            time.sleep(rate_limit)
             
-            if pitcher_data is not None and not pitcher_data.empty:
-                # データを処理して保存
+        if not all_pitcher_data.empty:
+            # データを処理して保存
+            try:
+                # データをStatcastClientの形式に変換
+                processed_data = statcast_client.transform_pitcher_data(all_pitcher_data)
+                
+                # データを保存
                 data_manager.process_statcast_data(
                     db_pitcher_id, 
                     mlb_id, 
                     pitcher_info['name'], 
-                    pitcher_data, 
+                    processed_data, 
                     team
                 )
+                
                 updated_count += 1
                 logger.info(f"Updated data for {pitcher_info['name']} (ID: {mlb_id})")
-            else:
-                logger.warning(f"No data found for {pitcher_info['name']} (ID: {mlb_id})")
-        except Exception as e:
-            logger.error(f"Error updating data for {pitcher_info['name']} (ID: {mlb_id}): {str(e)}")
-            
-        # APIレート制限を考慮した待機
-        time.sleep(batch_processor.rate_limit_pause)
+            except Exception as e:
+                logger.error(f"Error processing data for {pitcher_info['name']}: {str(e)}")
+        else:
+            logger.warning(f"No data found for {pitcher_info['name']} (ID: {mlb_id})")
     
     return updated_count
 
@@ -212,12 +224,7 @@ def main():
         
         # 各種クライアント・プロセッサの初期化
         statcast_client = StatcastClient()
-        team_processor = TeamProcessor()
-        batch_processor = BatchProcessor(
-            statcast_client, 
-            max_workers=args.max_workers, 
-            rate_limit_pause=args.rate_limit
-        )
+        team_processor = StatcastTeamProcessor(cache_dir="data/cache")
         data_manager = DataManager(db)
         
         # 更新対象のチームを決定
@@ -238,11 +245,11 @@ def main():
                 team,
                 team_processor,
                 statcast_client,
-                batch_processor,
                 data_manager,
                 years=args.years,
                 force_update=args.force_update,
-                start_year=args.start_year
+                start_year=args.start_year,
+                rate_limit=args.rate_limit
             )
             total_updated += updated_count
             

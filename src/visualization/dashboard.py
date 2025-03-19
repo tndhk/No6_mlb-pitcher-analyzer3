@@ -9,6 +9,17 @@ from typing import Dict, List, Any, Optional
 from src.data_storage.database import Database
 from src.data_analysis.pitcher_analyzer import PitcherAnalyzer
 
+def safe_rerun():
+    """
+    StreamlitのバージョンによってrerunメソッドのAPIが異なるため、
+    複数のバージョンに対応する安全なrerun方法を提供する
+    """
+    try:
+        # 新しいバージョン（v1.23.0以降）
+        st.rerun()
+    except AttributeError:
+        st.experimental_rerun()
+
 
 class Dashboard:
     """
@@ -159,7 +170,7 @@ class Dashboard:
                 
                 if st.button("選手を表示"):
                     st.session_state.selected_pitcher = pitcher_ids[selected_index]
-                    st.rerun()
+                    safe_rerun() 
             else:
                 st.info("該当する投手が見つかりませんでした")
                 
@@ -193,7 +204,7 @@ class Dashboard:
                 
                 if st.button("選手を表示"):
                     st.session_state.selected_pitcher = pitcher_ids[selected_index]
-                    st.rerun()
+                    safe_rerun() 
             else:
                 st.info(f"{selected_team}の投手データが見つかりませんでした")
         else:
@@ -234,7 +245,7 @@ class Dashboard:
                 
                 if st.button("選手を表示"):
                     st.session_state.selected_pitcher = pitcher_ids[selected_index]
-                    st.rerun()
+                    safe_rerun() 
             else:
                 st.info("フィルタ条件に一致する投手がいません")
         else:
@@ -290,7 +301,7 @@ class Dashboard:
             all_pitchers = self.db.get_all_pitchers()
             if all_pitchers:
                 st.session_state.selected_pitcher = all_pitchers[0]['id']
-                st.rerun()
+                safe_rerun() 
             else:
                 st.warning("データベースに投手データがありません")
                 

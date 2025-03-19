@@ -33,16 +33,61 @@ class TeamProcessor:
         """
         try:
             self.logger.info(f"Fetching pitchers for {team} in {season}")
-            # 以前のteam_roster関数の代わりに、pitching_statsを使用してチームの投手を取得
-            stats = pitching_stats(season, team=team)
             
-            # 結果が空でないか確認
-            if stats.empty:
+            # 有効なシーズンの設定 (2022年までのデータが安定)
+            valid_season = min(season, 2022)
+            if valid_season != season:
+                self.logger.info(f"Using {valid_season} data instead of {season} for stability")
+            
+            # キーポイント1: qual=0 で全投手を取得
+            # キーポイント2: エラー処理を強化
+            try:
+                self.logger.info(f"Requesting data with pitching_stats({valid_season}, qual=0)")
+                all_pitchers = pitching_stats(valid_season, qual=0)
+                
+                # 結果が期待通りか確認
+                if all_pitchers is None or all_pitchers.empty:
+                    self.logger.warning(f"Empty result from pitching_stats for season {valid_season}")
+                    all_pitchers = pd.DataFrame()
+                else:
+                    self.logger.info(f"Successfully retrieved data with {len(all_pitchers)} rows")
+                    self.logger.info(f"Columns: {all_pitchers.columns.tolist()}")
+            except Exception as e:
+                self.logger.error(f"Error calling pitching_stats: {str(e)}")
+                all_pitchers = pd.DataFrame()
+            
+            # データが空の場合は早期リターン
+            if all_pitchers.empty:
+                self.logger.warning(f"No pitching data available for season {valid_season}")
+                return []
+            
+            # Team列の名前を特定 (APIの変更に対応)
+            team_column = None
+            for possible_column in ['Team', 'team', 'teamIDs', 'Tm']:
+                if possible_column in all_pitchers.columns:
+                    team_column = possible_column
+                    self.logger.info(f"Found team column: {team_column}")
+                    break
+            
+            if team_column is None:
+                self.logger.warning(f"No team column found in data. Columns: {all_pitchers.columns.tolist()}")
+                return []
+            
+            # チームでフィルタリング
+            team_pitchers = all_pitchers[all_pitchers[team_column] == team]
+            
+            if team_pitchers.empty:
+                # チーム名のマッピングの問題かもしれない
+                self.logger.warning(f"No pitchers found for team {team} in season {valid_season}")
+                self.logger.info(f"Available teams: {all_pitchers[team_column].unique().tolist()}")
+                return []
+            
+            if team_pitchers.empty:
                 self.logger.warning(f"No pitchers found for {team} in {season}")
                 return []
             
             result = []
-            for _, row in stats.iterrows():
+            for _, row in team_pitchers.iterrows():
                 # IDの取得
                 mlbam_id = None
                 name = row.get('Name', '')
@@ -87,8 +132,23 @@ class TeamProcessor:
         """
         try:
             self.logger.info(f"Fetching pitching stats for {team} from {start_season} to {end_season}")
-            stats = team_pitching(start_season, end_season, team=team)
-            return stats
+            
+            # 全チームのデータを取得
+            all_teams_stats = team_pitching(start_season, end_season)
+            
+            # Teamカラムがあることを確認
+            if 'Team' not in all_teams_stats.columns:
+                self.logger.warning(f"'Team' column not found in team pitching stats")
+                return pd.DataFrame()
+                
+            # チームでフィルタリング
+            team_stats = all_teams_stats[all_teams_stats['Team'] == team]
+            
+            if team_stats.empty:
+                self.logger.warning(f"No pitching stats found for {team} from {start_season} to {end_season}")
+                
+            return team_stats
+            
         except Exception as e:
             self.logger.error(f"Error fetching team pitching stats for {team}: {str(e)}")
             raise

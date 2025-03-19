@@ -60,7 +60,7 @@ class StatcastClient:
                 return None
                 
             # 最も関連性の高い選手のIDを返す（同姓同名の場合を考慮）
-            return player_info.iloc[0]['mlbam']
+            return player_info.iloc[0]['key_mlbam']
         except Exception as e:
             self.logger.error(f"Error looking up player {first_name} {last_name}: {str(e)}")
             raise
