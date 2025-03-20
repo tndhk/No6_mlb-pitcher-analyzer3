@@ -342,6 +342,7 @@ class Dashboard:
         with tabs[3]:
             self._display_detailed_metrics_tab(pitcher_summary)
             
+    # src/visualization/dashboard.py の _display_overview_tab メソッドを修正
     def _display_overview_tab(self, pitcher_summary: Dict[str, Any]):
         """
         概要タブの表示
@@ -357,14 +358,31 @@ class Dashboard:
         with col1:
             st.subheader("基本指標")
             
-            # 主要指標を表示
+            # 安全な値変換関数を定義
+            def safe_value(value, format_str=None):
+                """bytes型や他の型を安全に表示可能な値に変換"""
+                if value is None:
+                    return 'N/A'
+                if isinstance(value, bytes):
+                    try:
+                        # bytesを整数に変換
+                        return int.from_bytes(value, byteorder='little')
+                    except:
+                        # 変換できない場合は文字列に
+                        return str(value)
+                # 数値の場合はフォーマット
+                if format_str and isinstance(value, (int, float)):
+                    return format_str.format(value)
+                return value
+            
+            # 主要指標を表示（bytes型を考慮）
             metrics_data = {
-                "ERA": metrics.get('era', 'N/A'),
-                "FIP": metrics.get('fip', 'N/A'),
-                "WHIP": metrics.get('whip', 'N/A'),
-                "K/9": metrics.get('k_per_9', 'N/A'),
-                "BB/9": metrics.get('bb_per_9', 'N/A'),
-                "HR/9": metrics.get('hr_per_9', 'N/A')
+                "ERA": safe_value(metrics.get('era'), "{:.2f}"),
+                "FIP": safe_value(metrics.get('fip'), "{:.2f}"),
+                "WHIP": safe_value(metrics.get('whip'), "{:.2f}"),
+                "K/9": safe_value(metrics.get('k_per_9'), "{:.2f}"),
+                "BB/9": safe_value(metrics.get('bb_per_9'), "{:.2f}"),
+                "HR/9": safe_value(metrics.get('hr_per_9'), "{:.2f}")
             }
             
             # 指標テーブルの作成
@@ -372,8 +390,8 @@ class Dashboard:
             st.dataframe(df, hide_index=True)
             
             # 試合数・イニング
-            st.metric("登板試合数", metrics.get('games', 'N/A'))
-            st.metric("投球イニング", metrics.get('innings_pitched', 'N/A'))
+            st.metric("登板試合数", safe_value(metrics.get('games')))
+            st.metric("投球イニング", safe_value(metrics.get('innings_pitched'), "{:.1f}"))
             
         with col2:
             st.subheader("球種構成")
@@ -383,7 +401,7 @@ class Dashboard:
                 self._create_pitch_usage_chart(pitcher_summary['pitch_types'])
             else:
                 st.info("球種データがありません")
-                
+
     def _create_pitch_usage_chart(self, pitch_types: List[Dict[str, Any]]):
         """
         球種使用割合の円グラフを作成
