@@ -70,6 +70,7 @@ streamlit run src/app.py
 ```bash
 # 手動でデータを更新する場合
 python -m src.data_acquisition.update_data
+docker compose exec app python src/data_acquisition/update_data_statcast.py --teams CHC
 ```
 
 ## プロジェクト構造
