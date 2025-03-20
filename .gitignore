@@ -57,6 +57,7 @@ venv.bak/
 
 # Project specific
 data/*.db
+data/cache/*
 *.sqlite
 *.log
 .DS_Store

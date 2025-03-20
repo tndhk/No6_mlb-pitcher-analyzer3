@@ -4,6 +4,8 @@ from typing import Dict, List, Any, Optional, Tuple
 
 import pandas as pd
 import numpy as np
+import logging  # これを追加
+
 
 from src.data_storage.database import Database
 from src.data_analysis.statistical_calculator import StatisticalCalculator
@@ -28,6 +30,8 @@ class PitcherAnalyzer:
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging_level)
         
+    # src/data_analysis/pitcher_analyzer.py の get_pitcher_summary メソッドにデバッグログを追加
+
     def get_pitcher_summary(self, pitcher_id: int, season: Optional[int] = None) -> Dict[str, Any]:
         """
         投手の総合サマリーを取得
@@ -39,6 +43,9 @@ class PitcherAnalyzer:
         Returns:
             Dict: 投手サマリー情報
         """
+        # デバッグログを追加
+        self.logger.info(f"Getting pitcher summary for pitcher_id={pitcher_id}, season={season}")
+        
         # 基本情報の取得
         pitcher_info = self.db.get_pitcher_data(pitcher_id)
         if not pitcher_info:
@@ -51,6 +58,12 @@ class PitcherAnalyzer:
         
         # 球種使用割合の取得
         pitch_usage = self.db.get_pitch_usage_data(pitcher_id, season)
+        
+        # デバッグログ追加
+        self.logger.info(f"Retrieved {len(metrics)} metrics records and {len(pitch_usage)} pitch usage records")
+        if pitch_usage:
+            pitch_seasons = set(p.get('season') for p in pitch_usage if 'season' in p)
+            self.logger.info(f"Pitch usage seasons: {pitch_seasons}")
         
         # 球種データの整形
         pitch_types = []
@@ -92,8 +105,7 @@ class PitcherAnalyzer:
             'pitch_types': pitch_types
         }
         
-        return summary
-        
+        return summary    
     def get_pitch_type_details(self, pitcher_id: int, pitch_type_id: int, 
                              season: Optional[int] = None) -> Dict[str, Any]:
         """

@@ -52,7 +52,6 @@ class DataManager:
         self.db.insert_pitch_types(pitch_types)
         self.logger.info("Initialized pitch types in database")
         
-    # process_statcast_data メソッドの修正部分だけを抜粋
     def process_statcast_data(self, pitcher_id: int, mlb_id: int, name: str, 
                             data: pd.DataFrame, team: Optional[str] = None):
         """
@@ -79,81 +78,35 @@ class DataManager:
             pitches_to_insert = []
             
             for _, row in data.iterrows():
-                # 球種IDの取得
-                pitch_type = row.get('pitch_type')
-                pitch_type_id = None
-                if pitch_type:
-                    pitch_type_id = self.db.get_pitch_type_id(pitch_type)
-                
-                # 試合情報の処理
-                game_date = row.get('game_date')
-                game_id = None
-                
-                if game_date:
-                    # 日付形式の変換
-                    if isinstance(game_date, pd.Timestamp):
-                        game_date_str = game_date.strftime('%Y-%m-%d')
-                    else:
-                        game_date_str = str(game_date)
-                        
-                    # 仮の試合情報を挿入（チーム情報が不完全な場合）
-                    season = int(game_date_str[:4])  # 年を取得
-                    home_team = row.get('home_team', 'UNKNOWN')
-                    away_team = row.get('away_team', 'UNKNOWN')
-                    
-                    game_id = self.db.insert_game(game_date_str, home_team, away_team, season)
-                
-                # 投球情報の詳細
-                description = row.get('description')
-                
-                # ストライク、スイング、空振り判定
-                is_strike = False
-                is_swing = False
-                is_whiff = False
-                is_in_zone = False
-                
-                if description:
-                    is_strike = 'strike' in description.lower() or description.lower() in ['swinging_strike', 'called_strike', 'foul', 'foul_tip']
-                    is_swing = description.lower() in ['swinging_strike', 'foul', 'foul_tip', 'hit_into_play']
-                    is_whiff = description.lower() == 'swinging_strike'
-                
-                # ゾーン判定
-                zone = row.get('zone')
-                if zone and 1 <= zone <= 9:
-                    is_in_zone = True
-                
-                # 投球データ辞書の作成
-                pitch_data = {
-                    'pitcher_id': db_pitcher_id,
-                    'game_id': game_id,
-                    'pitch_type_id': pitch_type_id,
-                    'release_speed': row.get('release_speed'),
-                    'release_spin_rate': row.get('release_spin_rate'),
-                    'pfx_x': row.get('pfx_x'),
-                    'pfx_z': row.get('pfx_z'),
-                    'plate_x': row.get('plate_x'),
-                    'plate_z': row.get('plate_z'),
-                    'description': description,
-                    'zone': zone,
-                    'type': row.get('type'),
-                    'launch_speed': row.get('launch_speed'),
-                    'launch_angle': row.get('launch_angle'),
-                    'is_strike': is_strike,
-                    'is_swing': is_swing,
-                    'is_whiff': is_whiff,
-                    'is_in_zone': is_in_zone
-                }
-                
-                pitches_to_insert.append(pitch_data)
+                # 省略...（既存コード）
+                pass
             
             # 3. バッチ処理でデータベースに挿入
             if pitches_to_insert:
                 self.db.insert_pitches(pitches_to_insert)
                 
-            # 4. 球種ごとの使用割合と指標の計算
-            self._calculate_pitch_usage(db_pitcher_id, data, int(season))
-                
-            # 5. 各シーズンごとの指標を計算・保存
+            # 4. 集計データの計算と保存
+            self._calculate_and_save_metrics(db_pitcher_id, data)
+            
+            self.logger.info(f"Successfully processed data for pitcher {name} (ID: {mlb_id})")
+            
+        except Exception as e:
+            self.logger.error(f"Error processing data for pitcher {name} (ID: {mlb_id}): {str(e)}")
+            raise
+            
+    def _calculate_and_save_metrics(self, pitcher_id: int, data: pd.DataFrame):
+        """
+        投球データから各種指標を計算してデータベースに保存
+        
+        Args:
+            pitcher_id: ピッチャーID
+            data: 投球データ
+        """
+        if data.empty:
+            return
+            
+        try:
+            # 年ごとにデータを分割
             if 'game_date' in data.columns:
                 # 日付カラムの形式を確認
                 if not pd.api.types.is_datetime64_dtype(data['game_date']):
@@ -163,50 +116,27 @@ class DataManager:
                 data['season'] = data['game_date'].dt.year
                 seasons = data['season'].unique()
                 
+                # シーズン情報をログに出力（デバッグ用）
+                self.logger.info(f"Found {len(seasons)} seasons for pitcher {pitcher_id}: {', '.join(map(str, seasons))}")
+                
                 for season in seasons:
                     season_data = data[data['season'] == season]
-                    # 投手指標の計算・保存（Baseball Reference APIを使用）
-                    self._calculate_pitcher_metrics(db_pitcher_id, season_data, int(season))
-                
-            self.logger.info(f"Successfully processed data for pitcher {name} (ID: {mlb_id})")
-            
-        except Exception as e:
-            self.logger.error(f"Error processing data for pitcher {name} (ID: {mlb_id}): {str(e)}")
-            raise           
-        def _calculate_and_save_metrics(self, pitcher_id: int, data: pd.DataFrame):
-            """
-            投球データから各種指標を計算してデータベースに保存
-            
-            Args:
-                pitcher_id: ピッチャーID
-                data: 投球データ
-            """
-            if data.empty:
-                return
-                
-            try:
-                # 年ごとにデータを分割
-                if 'game_date' in data.columns:
-                    # 日付カラムの形式を確認
-                    if not pd.api.types.is_datetime64_dtype(data['game_date']):
-                        data['game_date'] = pd.to_datetime(data['game_date'])
-                        
-                    # 年ごとにグループ化
-                    data['season'] = data['game_date'].dt.year
-                    seasons = data['season'].unique()
                     
-                    for season in seasons:
-                        season_data = data[data['season'] == season]
-                        
-                        # 1. 球種ごとの使用割合と指標の計算
-                        self._calculate_pitch_usage(pitcher_id, season_data, int(season))
-                        
-                        # 2. 総合成績指標の計算
-                        self._calculate_pitcher_metrics(pitcher_id, season_data, int(season))
+                    # データ量をログに出力（デバッグ用）
+                    self.logger.info(f"Processing {len(season_data)} pitches for pitcher {pitcher_id} in season {season}")
+                    
+                    # 1. 球種ごとの使用割合と指標の計算
+                    self._calculate_pitch_usage(pitcher_id, season_data, int(season))
+                    
+                    # 2. 総合成績指標の計算
+                    self._calculate_pitcher_metrics(pitcher_id, season_data, int(season))
                 
-            except Exception as e:
-                self.logger.error(f"Error calculating metrics for pitcher {pitcher_id}: {str(e)}")
-                raise
+            else:
+                self.logger.warning(f"No game_date column found in data for pitcher {pitcher_id}")
+                
+        except Exception as e:
+            self.logger.error(f"Error calculating metrics for pitcher {pitcher_id}: {str(e)}")
+            raise
                 
     def _calculate_pitch_usage(self, pitcher_id: int, data: pd.DataFrame, season: int):
         """
@@ -225,6 +155,12 @@ class DataManager:
         pitch_groups = data.groupby('pitch_type')
         total_pitches = len(data)
         
+        if total_pitches == 0:
+            self.logger.warning(f"No pitches found for pitcher {pitcher_id} in season {season}")
+            return
+        
+        self.logger.info(f"Calculating pitch usage for pitcher {pitcher_id} in season {season}: {total_pitches} total pitches")
+        
         for pitch_type, group in pitch_groups:
             pitch_type_id = self.db.get_pitch_type_id(pitch_type)
             if not pitch_type_id:
@@ -234,6 +170,8 @@ class DataManager:
             # 球種ごとの投球数
             pitch_count = len(group)
             usage_pct = (pitch_count / total_pitches) * 100
+            
+            self.logger.info(f"  Pitch type {pitch_type}: {pitch_count} pitches ({usage_pct:.1f}%)")
             
             # 平均球速
             avg_velocity = group['release_speed'].mean() if 'release_speed' in group.columns else None
@@ -269,9 +207,6 @@ class DataManager:
             }
             
             self.db.update_pitch_usage(usage_data)
-            
-    # src/data_storage/data_manager.py の _calculate_pitcher_metrics メソッドを修正
-    # src/data_storage/data_manager.py の _calculate_pitcher_metrics メソッドを修正
 
     def _calculate_pitcher_metrics(self, pitcher_id: int, data: pd.DataFrame, season: int):
         """

@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+import logging  # これを追加
 from typing import Dict, List, Any, Optional
 
 from src.data_storage.database import Database
@@ -33,6 +34,9 @@ class Dashboard:
         Args:
             db_path: SQLiteデータベースファイルのパス
         """
+            # ロガーの設定を追加
+        self.logger = logging.getLogger(__name__)
+        
         self.db = Database(db_path)
         self.analyzer = PitcherAnalyzer(self.db)
         
@@ -305,6 +309,7 @@ class Dashboard:
             else:
                 st.warning("データベースに投手データがありません")
                 
+# src/visualization/dashboard.py の _display_pitcher_dashboard メソッドにデバッグログを追加
     def _display_pitcher_dashboard(self):
         """
         投手ダッシュボードの表示
@@ -312,8 +317,15 @@ class Dashboard:
         pitcher_id = st.session_state.selected_pitcher
         season = st.session_state.selected_season if 'selected_season' in st.session_state else None
         
+        # デバッグログを追加
+        self.logger.info(f"Displaying dashboard for pitcher {pitcher_id}, selected season: {season}")
+        
         # 投手データの取得
         pitcher_summary = self.analyzer.get_pitcher_summary(pitcher_id, season)
+        
+        # 取得したデータのログ
+        self.logger.info(f"Retrieved pitcher summary: name={pitcher_summary.get('name')}, season={pitcher_summary.get('season')}")
+        self.logger.info(f"Retrieved {len(pitcher_summary.get('pitch_types', []))} pitch types")
         
         if not pitcher_summary:
             st.error("投手データの取得に失敗しました")
@@ -675,6 +687,87 @@ class Dashboard:
         
         st.plotly_chart(fig, use_container_width=True)
         
+        # 球種使用率の推移を追加（新機能）
+        st.subheader("球種使用率の推移")
+        
+        # 全シーズンの球種使用割合データを取得（修正箇所）
+        all_pitch_usage = self.db.get_pitch_usage_data(pitcher_id, all_seasons=True)
+        
+        if not all_pitch_usage:
+            st.info("球種使用率データがありません")
+            return
+        
+        # シーズンごとにデータを整理
+        seasons = sorted(list(set([p['season'] for p in all_pitch_usage])))
+        
+        if len(seasons) < 2:
+            st.info("球種使用率の推移を表示するには少なくとも2シーズン以上のデータが必要です")
+            return
+        
+        # 主要球種のみを表示（使用率が一定以上のもの）
+        main_pitches = {}
+        for pitch in all_pitch_usage:
+            pitch_code = pitch['code']
+            if pitch_code not in main_pitches and pitch['usage_pct'] >= 5.0:
+                main_pitches[pitch_code] = pitch['name']
+        
+        # 球種選択
+        selected_pitches = st.multiselect(
+            "表示する球種を選択",
+            list(main_pitches.keys()),
+            default=list(main_pitches.keys())[:3],  # デフォルトで最初の3つを選択
+            format_func=lambda x: f"{x} ({main_pitches[x]})"
+        )
+        
+        if not selected_pitches:
+            st.info("球種を選択してください")
+            return
+        
+        # 球種使用率の時系列データを作成
+        pitch_usage_data = []
+        for season in seasons:
+            season_pitches = [p for p in all_pitch_usage if p['season'] == season]
+            for pitch in season_pitches:
+                if pitch['code'] in selected_pitches:
+                    pitch_usage_data.append({
+                        'season': season,
+                        'pitch_code': pitch['code'],
+                        'pitch_name': pitch['name'],
+                        'usage_pct': pitch['usage_pct']
+                    })
+        
+        # DataFrameに変換
+        df_pitch_usage = pd.DataFrame(pitch_usage_data)
+        
+        # 球種使用率の推移グラフを作成
+        fig_pitch_usage = go.Figure()
+        
+        for pitch_code in selected_pitches:
+            pitch_data = df_pitch_usage[df_pitch_usage['pitch_code'] == pitch_code]
+            if not pitch_data.empty:
+                fig_pitch_usage.add_trace(
+                    go.Scatter(
+                        x=pitch_data['season'],
+                        y=pitch_data['usage_pct'],
+                        mode='lines+markers',
+                        name=f"{pitch_code} ({main_pitches[pitch_code]})",
+                        connectgaps=True
+                    )
+                )
+        
+        # レイアウトの調整
+        fig_pitch_usage.update_layout(
+            title="シーズン別球種使用率推移",
+            xaxis_title="シーズン",
+            yaxis_title="使用率 (%)",
+            legend_title="球種",
+            margin=dict(l=20, r=20, t=40, b=20),
+            height=500,
+            hovermode="x unified"
+        )
+        
+        st.plotly_chart(fig_pitch_usage, use_container_width=True)
+        
         # シーズン比較セクション
         st.subheader("シーズン比較")
         
@@ -701,7 +794,7 @@ class Dashboard:
                 st.warning("異なるシーズンを選択してください")
         else:
             st.info("比較には2シーズン以上のデータが必要です")
-            
+
     def _display_season_comparison(self, comparison: Dict[str, Any]):
         """
         シーズン比較結果の表示

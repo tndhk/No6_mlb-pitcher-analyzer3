@@ -549,13 +549,15 @@ class Database:
             if conn:
                 conn.close()
                 
-    def get_pitch_usage_data(self, pitcher_id: int, season: Optional[int] = None) -> List[Dict[str, Any]]:
+    # src/data_storage/database.py の get_pitch_usage_data メソッドを修正
+    def get_pitch_usage_data(self, pitcher_id: int, season: Optional[int] = None, all_seasons: bool = False) -> List[Dict[str, Any]]:
         """
         ピッチャーの球種使用割合を取得
         
         Args:
             pitcher_id: ピッチャーID
-            season: シーズン（指定しない場合は最新シーズン）
+            season: シーズン（指定しない場合は最新シーズン、all_seasons=Trueの場合は無視）
+            all_seasons: 全シーズンのデータを取得するフラグ
             
         Returns:
             List[Dict]: 球種使用割合データのリスト
@@ -564,7 +566,17 @@ class Database:
             conn = self._get_connection()
             cursor = conn.cursor()
             
-            if season:
+            if all_seasons:
+                # 全シーズンのデータを取得
+                cursor.execute('''
+                SELECT pu.*, pt.code, pt.name
+                FROM pitch_usage pu
+                JOIN pitch_types pt ON pu.pitch_type_id = pt.id
+                WHERE pu.pitcher_id = ?
+                ORDER BY pu.season DESC, pu.usage_pct DESC
+                ''', (pitcher_id,))
+            elif season:
+                # 特定シーズンのデータを取得
                 cursor.execute('''
                 SELECT pu.*, pt.code, pt.name
                 FROM pitch_usage pu
@@ -592,8 +604,7 @@ class Database:
             raise
         finally:
             if conn:
-                conn.close()
-                
+                conn.close()                
     def get_pitchers_by_team(self, team: str) -> List[Dict[str, Any]]:
         """
         チームに所属する全ピッチャーを取得
